@@ -1,0 +1,245 @@
+openapi: 3.0.3
+info:
+  title: AgriScan AI API
+  version: 1.0.0
+  description: |
+    REST API untuk sistem AgriScan AI yang melakukan deteksi dini penyakit
+    tanaman cabai dan tomat menggunakan CNN melalui ONNX Runtime secara
+    server-side.
+
+servers:
+  - url: http://localhost:8000
+    description: Development server
+  - url: https://api.example.com
+    description: Production server
+    # [ASUMSI-01] URL production masih placeholder.
+
+tags:
+  - name: AI
+    description: Endpoint yang melibatkan analisis dan inferensi AI
+
+paths:
+  /api/v1/detect:
+    post:
+      tags:
+        - AI
+      summary: Menganalisis citra tanaman
+      operationId: detectPlantImage
+      description: |
+        Menganalisis citra tanaman cabai atau tomat. Sistem melakukan validasi,
+        preprocessing, inferensi CNN, confidence, status hasil, dan indikasi OOD.
+        Status:
+        - HIGH_CONFIDENCE: confidence >= 70%
+        - LOW_CONFIDENCE: 50% <= confidence < 70%
+        - POTENTIAL_OOD: confidence < 50% atau terindikasi OOD
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - image
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: JPG/JPEG/PNG, maksimal 5 MB.
+      responses:
+        '200':
+          description: Analisis berhasil.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetectionResponse'
+              examples:
+                highConfidence:
+                  value:
+                    success: true
+                    data:
+                      prediction:
+                        class: Cabai Antraknosa
+                        confidence: 0.86
+                        confidence_percent: 86.0
+                        status: HIGH_CONFIDENCE
+                        ood: false
+                      preprocessing:
+                        available: true
+                      warning: null
+                      disclaimer: Hasil AI merupakan indikasi awal, bukan diagnosis definitif dari pakar.
+                lowConfidence:
+                  value:
+                    success: true
+                    data:
+                      prediction:
+                        class: Tomat Early Blight
+                        confidence: 0.62
+                        confidence_percent: 62.0
+                        status: LOW_CONFIDENCE
+                        ood: false
+                      preprocessing:
+                        available: true
+                      warning:
+                        code: LOW_CONFIDENCE
+                        message: Hasil belum cukup meyakinkan. Silakan ambil foto kembali dengan pencahayaan dan fokus yang lebih baik.
+                      disclaimer: Hasil AI merupakan indikasi awal, bukan diagnosis definitif dari pakar.
+                potentialOOD:
+                  value:
+                    success: true
+                    data:
+                      prediction:
+                        class: Tomat Late Blight
+                        confidence: 0.43
+                        confidence_percent: 43.0
+                        status: POTENTIAL_OOD
+                        ood: true
+                      preprocessing:
+                        available: true
+                      warning:
+                        code: OOD_DETECTED
+                        message: Gambar belum dapat dikenali dengan cukup yakin oleh sistem. Silakan gunakan gambar tanaman cabai atau tomat dengan objek terlihat jelas.
+                      disclaimer: Hasil AI merupakan indikasi awal, bukan diagnosis definitif dari pakar.
+        '400':
+          description: Citra tidak valid atau terlalu besar.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '408':
+          description: Model AI timeout.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Request tidak valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit terlampaui.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Preprocessing gagal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Model tidak tersedia atau inferensi gagal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    Prediction:
+      type: object
+      required: [class, confidence, confidence_percent, status, ood]
+      properties:
+        class:
+          type: string
+          enum:
+            - Cabai Normal
+            - Cabai Antraknosa
+            - Cabai Leaf Curl
+            - Tomat Normal
+            - Tomat Early Blight
+            - Tomat Late Blight
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+        confidence_percent:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+        status:
+          type: string
+          enum: [HIGH_CONFIDENCE, LOW_CONFIDENCE, POTENTIAL_OOD]
+        ood:
+          type: boolean
+
+    Preprocessing:
+      type: object
+      required: [available]
+      properties:
+        available:
+          type: boolean
+
+    Warning:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [LOW_CONFIDENCE, OOD_DETECTED]
+        message:
+          type: string
+
+    DetectionData:
+      type: object
+      required: [prediction, preprocessing, disclaimer]
+      properties:
+        prediction:
+          $ref: '#/components/schemas/Prediction'
+        preprocessing:
+          $ref: '#/components/schemas/Preprocessing'
+        warning:
+          allOf:
+            - $ref: '#/components/schemas/Warning'
+          nullable: true
+        disclaimer:
+          type: string
+
+    DetectionResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+        data:
+          $ref: '#/components/schemas/DetectionData'
+
+    ErrorDetail:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum:
+            - INVALID_IMAGE_FORMAT
+            - IMAGE_TOO_LARGE
+            - INVALID_IMAGE_DATA
+            - MODEL_TIMEOUT
+            - INVALID_REQUEST
+            - RATE_LIMIT_EXCEEDED
+            - PREPROCESSING_FAILED
+            - MODEL_UNAVAILABLE
+            - MODEL_INFERENCE_FAILED
+        message:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+  # [ASUMSI-02] Bearer authentication belum diwajibkan karena belum
+  # didefinisikan pada LLD/OpenAPI sebelumnya.
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
